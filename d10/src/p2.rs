@@ -11,15 +11,15 @@ pub struct Location {
 }
 
 impl Location {
-    pub fn neighbor(&self, idx: usize, j: i64) -> Option<Self> {
+    pub fn neighbor(&self, idx: usize) -> Option<Self> {
         let row = self.row as i64;
         let col = self.col as i64;
 
         let (row, col) = match idx {
-            0 => (row - j, col),
-            1 => (row, col + j),
-            2 => (row + j, col),
-            3 => (row, col - j),
+            0 => (row - 1, col),
+            1 => (row, col + 1),
+            2 => (row + 1, col),
+            3 => (row, col - 1),
             _ => unreachable!(),
         };
 
@@ -32,17 +32,6 @@ impl Location {
             })
         }
     }
-
-    pub fn neighbors_all<'a>(&self, nodes: &'a HashMap<Location, Node>) -> Vec<Location> {
-        let v = vec![
-            self.neighbor(0, 1),
-            self.neighbor(1, 1),
-            self.neighbor(2, 1),
-            self.neighbor(3, 1),
-        ];
-
-        v.iter().filter_map(|l| *l).collect()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +39,7 @@ pub struct Node {
     location: Location,
     // NORTH, EAST, SOUTH, WEST
     connections: [bool; 4],
+    c: char,
 }
 
 impl Node {
@@ -62,6 +52,7 @@ impl Node {
             return Some(Self {
                 location,
                 connections: [true, true, true, true],
+                c,
             });
         };
 
@@ -78,6 +69,7 @@ impl Node {
         Some(Self {
             location,
             connections,
+            c,
         })
     }
 
@@ -86,7 +78,7 @@ impl Node {
 
         for i in 0..4 {
             if self.connections[i] {
-                let l = self.location.neighbor(i, 2);
+                let l = self.location.neighbor(i);
                 match l {
                     Some(l) => {
                         if nodes.contains_key(&l) {
@@ -102,77 +94,30 @@ impl Node {
     }
 }
 
-pub fn block(nodes: &HashMap<Location, Node>, l: (Option<Location>, Option<Location>)) -> bool {
-    let n1 = l.0.and_then(|o| nodes.get(&o));
-    let n2 = l.1.and_then(|o| nodes.get(&o));
-
-    match (n1, n2) {
-        (None, None) => return false,
-        (None, Some(_)) => return false,
-        (Some(_), None) => return false,
-        (Some(n1), Some(n2)) => {
-            let n1n = n1.neighbors(nodes);
-
-            for n in n1n {
-                if n.location == n2.location {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-pub fn ff<'a>(
-    nodes: &'a HashMap<Location, Node>,
-    pass: &HashMap<Location, bool>,
-    start: &'a Node,
-    rows: usize,
-    cols: usize,
-) ->  HashSet<Location>  {
-    let mut stack: VecDeque<Location> = VecDeque::new();
-    let mut dists: HashSet<Location> = HashSet::new();
-    stack.push_back(start.location);
-    dists.insert(start.location);
-
-    let mut c = 0;
+pub fn bfs<'a>(nodes: &'a HashMap<Location, Node>, start: &'a Node) -> HashMap<Location, u64> {
+    let mut stack: VecDeque<&Node> = VecDeque::new();
+    let mut dists: HashMap<Location, u64> = HashMap::new();
+    stack.push_back(start);
+    dists.insert(start.location, 0);
 
     while !stack.is_empty() {
         let n = stack.pop_front().unwrap();
+        let dist = dists[&n.location];
 
-        for ni in n.neighbors_all(nodes) {
-            if dists.contains(&ni) {
+        for ni in n.neighbors(nodes) {
+            if dists.contains_key(&ni.location) {
                 continue;
             }
 
-            let p = match pass.get(&ni) {
-                Some(p) => *p,
-                None => true,
-            };
-
-            if !p {
-                continue;
-            }
-
-            if ni.row >= rows || ni.col >= cols {
-                continue
-            }
-
-            if ni.row % 2 == 0 && ni.col % 2 == 0 {
-                c += 1;
-            }
-
-            dists.insert(ni);
-            stack.push_back(ni);
+            dists.insert(ni.location, dist + 1);
+            stack.push_back(&nodes[&ni.location]);
         }
     }
 
     dists
 }
-
 pub fn p2() -> std::io::Result<()> {
-    let file = File::open("d10/src/test.txt")?;
+    let file = File::open("d10/src/input.txt")?;
     let buf_reader = BufReader::new(file);
 
     let mut nodes: HashMap<Location, Node> = HashMap::new();
@@ -183,14 +128,11 @@ pub fn p2() -> std::io::Result<()> {
     let mut rows = 0;
 
     for (row, l) in buf_reader.lines().enumerate() {
-        cols = 0;
+        let l = l?;
+        cols = l.len();
         rows += 1;
-        for (col, c) in l?.chars().enumerate() {
-            cols += 1;
-            let loc = Location {
-                row: (row * 2) + 1,
-                col: (col * 2) + 1,
-            };
+        for (col, c) in l.chars().enumerate() {
+            let loc = Location { row, col };
             let node = Node::new(c, loc);
             match node {
                 Some(node) => {
@@ -206,116 +148,111 @@ pub fn p2() -> std::io::Result<()> {
 
     let mut start = start.unwrap();
 
+    println!("{:?}", start.neighbors(&nodes));
+
+    let mut actual_conn = [false, false, false, false];
     for (idx, n) in start.neighbors(&nodes).iter().enumerate() {
-        if !n
+        println!("{:?}", n);
+        println!("{:?}", n.neighbors(&nodes));
+        let valid = n
             .neighbors(&nodes)
             .iter()
-            .any(|n| n.location == start.location)
-        {
-            start.connections[idx] = false;
+            .any(|nn| nn.location == start.location);
+
+        actual_conn[idx] = valid;
+    }
+
+    start.connections = actual_conn;
+
+    println!("{:?}", start.connections);
+
+    nodes.get_mut(&start.location).unwrap().connections = start.connections;
+
+    let cycle = bfs(&nodes, &start);
+
+    let mut contained: HashSet<Location> = HashSet::new();
+
+    let mut imap: HashMap<Location, u64> = HashMap::new();
+
+    for row in 0..rows {
+        let mut intersections = 0;
+        let mut last: Option<&Node> = None;
+        let mut inside = false;
+
+        for col in 0..cols {
+            let location = Location { row, col };
+            let node = cycle.get(&location).and(nodes.get(&location));
+
+            match (last, node) {
+                (None, Some(n)) => {
+                    if n.connections[0] {
+                        intersections += 1;
+                    }
+                }
+                (None, None) => {}
+                (Some(n), None) => {
+                    // if n.connections[0]  {
+                    //     intersections += 1;
+                    // }
+                }
+                (Some(l), Some(n)) => {
+                    if n.connections[0] {
+                        intersections += 1;
+                    }
+                }
+            }
+
+            last = node;
+
+            imap.insert(location, intersections);
+
+            if cycle.get(&location).is_none() && intersections % 2 == 1 {
+                contained.insert(location);
+            }
+
+            last = node;
         }
     }
 
-    let mut pass: HashMap<Location, bool> = HashMap::new();
+    // for row in 0..rows {
+    //     for col in 0..cols {
+    //         let location = Location { row, col };
+    //         if cycle.contains_key(&location) {
+    //             print!("{}", nodes[&location].c);
+    //         }
+    //         else {
+    //             print!(".");
+    //         }
+    //     }
+    //     println!("");
+    // }
 
-    for l in nodes.keys() {
-        pass.insert(*l, false);
-    }
+    // println!("------------------------");
 
-    // for y in 0..(rows * 2) + 1 {
-    //     for x in 0..(cols * 2) + 1 {
-    //         match pass.get(&Location { row: y, col: x }) {
-    //             Some(b) => match b {
-    //                 true => print!("."),
-    //                 false => print!("X"),
-    //             },
+    // for row in 0..rows {
+    //     for col in 0..cols {
+    //         let location = Location { row, col };
+    //         print!("{:02}|", imap[&location]);
+    //     }
+    //     println!("");
+    // }
+
+    // println!("------------------------");
+
+    // for row in 0..rows {
+    //     for col in 0..cols {
+    //         let l = Location { row, col };
+    //         match contained.get(&l) {
+    //             Some(_) => print!("X"),
     //             None => print!("."),
     //         }
     //     }
     //     println!("");
     // }
 
-    for row in 0..(rows * 2) + 1 {
-        for col in 0..(cols * 2) + 1 {
-            if pass.contains_key(&Location { row, col }) {
-                continue;
-            }
-
-            let fake = Location { row, col };
-
-            let lhoriz = (fake.neighbor(3, 1), fake.neighbor(1, 1));
-
-            let lvert = (fake.neighbor(0, 1), fake.neighbor(2, 1));
-
-            let hblock = block(&nodes, lhoriz);
-            let vblock = block(&nodes, lvert);
-
-            let mut p = !(hblock || vblock);
-
-            if lhoriz.0.is_some() && lhoriz.1.is_some() && lvert.0.is_some() && lvert.1.is_some() {
-                // p = false;
-            }
-
-            pass.insert(fake, p);
-        }
-    }
-
-    // for y in 0..(rows * 2) + 1 {
-    //     for x in 0..(cols * 2) + 1 {
-    //         match pass.get(&Location { row: y, col: x }) {
-    //             Some(b) => match b {
-    //                 true => print!("."),
-    //                 false => print!("X"),
-    //             },
-    //             None => print!("."),
-    //         }
-    //     }
-    //     println!("");
-    // }
-
-    let found = ff(
-        &nodes,
-        &pass,
-        &Node {
-            location: Location { row: 0, col: 0 },
-            connections: [true, true, true, true],
-        },
-        (rows * 2) + 1,
-        (cols * 2) + 1,
-    );
-
-    for y in 0..(rows * 2) + 1 {
-        for x in 0..(cols * 2) + 1 {
-            match found.get(&Location { row: y, col: x }) {
-                Some(b) => print!("X"),
-                None => {
-                    match nodes.get(&Location { row: y + 1 & !1, col: x + 1 & !1}) {
-                        Some(_) => print!("X"),
-                        None => print!("."),
-                    }
-                }
-            }
-        }
-        println!("");
-    }
-
-    let mut c = 0;
-
-    for y in 0..(rows * 2) + 1 {
-        for x in 0..(cols * 2) + 1 {
-            match found.get(&Location { row: y, col: x }) {
-                Some(b) => {},
-                None => {
-                    match nodes.get(&Location { row: y & 1, col: x & 1}) {
-                        Some(_) => {},
-                        None => { c += 1},
-                    }
-                }
-            }
-        }
-    }
-
-    println!("{}", c / 2);
+    println!("{}", contained.len());
 
     Ok(())
 }
+
+// Use a "ray" and count intersections, walking across each row

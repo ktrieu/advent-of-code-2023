@@ -1,8 +1,6 @@
 use std::{
-    cmp::Ordering,
     fs::File,
-    io::{BufRead, BufReader, Lines},
-    ops::RangeBounds,
+    io::{BufRead, BufReader, Lines}, fmt::Display,
 };
 
 // EXCLUSIVE
@@ -10,6 +8,12 @@ use std::{
 struct Range {
     start: usize,
     end: usize,
+}
+
+impl Display for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} - {}", self.start, self.end)
+    }
 }
 
 impl Range {
@@ -20,8 +24,13 @@ impl Range {
         }
     }
 
-    pub fn contains(&self, idx: usize) -> bool {
-        idx >= self.start && idx < self.end
+    pub fn len(&self) -> u64 {
+        if self.end < self.start {
+            0
+        }
+        else {
+            (self.end - self.start) as u64
+        }
     }
 
     pub fn intersect(&self, other: &Range) -> Option<Range> {
@@ -33,6 +42,57 @@ impl Range {
         } else {
             Some(Range { start, end })
         }
+    }
+
+    pub fn map(&self, other: &Vec<MapRange>) -> Vec<Range> {
+        println!("Mapping {self}");
+        display(other); 
+
+        let mut ret: Vec<Range> = Vec::new();
+
+        let mut range = Range {
+            start: self.start,
+            end: self.end
+        };
+
+        for mr in other {
+            match mr.src.intersect(&range) {
+                Some(intersected) => {
+                    // If we're past the start of our range:
+                    if intersected.start > range.start {
+                        // Output the "leftover" identity mapped portion
+                        ret.push(Range {
+                            start: range.start,
+                            end: intersected.start
+                        });
+                    }
+
+                    // Output the mapped portion
+                    ret.push(mr.map(&intersected));
+
+                    // Adjust our range to start "past" what we've already processed.
+                    range = Range {
+                        start: intersected.end,
+                        end: range.end
+                    }
+                },
+                None => {},
+            };
+
+            if range.len() == 0 {
+                break
+            }
+        };
+
+        // If we have anything left, output the remainder
+        if range.len() != 0 {
+            ret.push(range);
+        }
+
+        println!("Result:");
+        display(&ret);
+
+        ret
     }
 }
 
@@ -59,6 +119,12 @@ struct MapRange {
     dst: Range,
 }
 
+impl Display for MapRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{} -> {} (delta {})]", self.src, self.dst, self.delta())
+    }
+}
+
 impl MapRange {
     pub fn new(src: usize, dst: usize, len: usize) -> Self {
         Self {
@@ -67,33 +133,15 @@ impl MapRange {
         }
     }
 
-    pub fn src_contains(&self, idx: usize) -> bool {
-        self.src.contains(idx)
+    pub fn delta(&self) -> i64 {
+        return self.dst.start as i64 - self.src.start as i64;
     }
 
-    pub fn map(&self, idx: usize) -> Option<usize> {
-        if self.src_contains(idx) {
-            Some(self.dst.start + (idx - self.src.start))
-        } else {
-            None
-        }
-    }
-
-    pub fn map_intersect(&self, other: &Range) -> Range {
-        let intersect = self.src.intersect(other);
-
-        match intersect {
-            Some(i) => {
-                let delta = self.dst.start as i64 - self.src.start as i64;
-                Range {
-                    start: (i.start as i64 + delta) as usize,
-                    end: (i.end as i64 + delta) as usize,
-                }
-            }
-            None => Range {
-                start: other.start,
-                end: other.end,
-            },
+    pub fn map(&self, range: &Range) -> Range {
+        // We assume someone has already checked that this intersects the src.
+        Range {
+            start: (range.start as i64 + self.delta()) as usize,
+            end: (range.end as i64 + self.delta()) as usize
         }
     }
 }
@@ -114,7 +162,7 @@ fn parse_ranges(reader: &mut Lines<BufReader<File>>) -> Vec<MapRange> {
         let src = numbers[1];
         let len = numbers[2];
 
-        ranges.push(MapRange::new(dst, src, len))
+        ranges.push(MapRange::new(src, dst, len))
     }
 
     ranges.sort_by_key(|r| r.src.start);
@@ -122,47 +170,23 @@ fn parse_ranges(reader: &mut Lines<BufReader<File>>) -> Vec<MapRange> {
     ranges
 }
 
-fn find_range(idx: usize, ranges: &Vec<MapRange>) -> Option<&MapRange> {
-    ranges
-        .binary_search_by(|r| {
-            if idx < r.src.start {
-                Ordering::Less
-            } else if idx >= r.src.end {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        })
-        .map(|idx| &ranges[idx])
-        .ok()
-}
-
-fn lookup(idx: usize, map: &Vec<MapRange>) -> usize {
-    let range = find_range(idx, map);
-
-    match range {
-        Some(range) => range.map(idx).unwrap(),
-        None => idx,
-    }
-}
-
 fn lookup_range(ranges: &Vec<Range>, map: &Vec<MapRange>) -> Vec<Range> {
-    println!("{ranges:?}");
-    println!("{map:?}");
     let mut ret: Vec<Range> = Vec::new();
 
     for r in ranges {
-        let intersected = map.iter().map(|map_range| map_range.map_intersect(&r));
-        ret.extend(intersected)
+        ret.extend(r.map(map))
     }
-
-    println!("{ret:?}");
 
     ret
 }
 
+fn display<T>(v: &Vec<T>) where T: ToString {
+    let s = v.iter().map(|mr| mr.to_string()).collect::<Vec<String>>().join(", ");
+    println!("{s}");
+}
+
 fn main() -> std::io::Result<()> {
-    let file = File::open("d05/src/test.txt")?;
+    let file = File::open("d05/src/input.txt")?;
     let buf_reader = BufReader::new(file);
 
     let mut lines = buf_reader.lines();
@@ -184,27 +208,29 @@ fn main() -> std::io::Result<()> {
         let soil = lookup_range(&vec![range], &seed_to_soil);
         let fert = lookup_range(&soil, &soil_to_fert);
         let water = lookup_range(&fert, &fert_to_water);
-
         let light = lookup_range(&water, &water_to_light);
-
         let temp = lookup_range(&light, &light_to_temp);
-
         let hum = lookup_range(&temp, &temp_to_hum);
-
         let location = lookup_range(&hum, &hum_to_locate);
 
-        // println!("{soil:?}");
-        // println!("{fert:?}");
-        // println!("{water:?}");
-        // println!("{light:?}");
-        // println!("{temp:?}");
-        // println!("{hum:?}");
-        // println!("{location:?}");
+        println!("Soil:");
+        display(&soil);
+        println!("Fert:");
+        display(&fert);
+        println!("Water:");
+        display(&water);
+        println!("Light:");
+        display(&light);
+        println!("Temp:");
+        display(&temp);
+        println!("Hum");
+        display(&hum);
+        println!("Location:");
+        display(&location);
         let smallest = location.iter().map(|l| l.start).min().unwrap();
 
         lowest = lowest.min(smallest);
 
-        println!("--------------")
     }
 
     println!("{lowest}");

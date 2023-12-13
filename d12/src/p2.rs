@@ -1,0 +1,241 @@
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
+};
+
+#[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
+enum Spring {
+    Working,
+    Broken,
+    Unknown,
+}
+
+impl Spring {
+    pub fn new(c: char) -> Self {
+        match c {
+            '.' => Self::Working,
+            '#' => Self::Broken,
+            '?' => Self::Unknown,
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn eval_slow(v: &[Spring]) -> Vec<u64> {
+    let mut ret: Vec<u64> = Vec::new();
+
+    let mut group = 0;
+    let mut last = Spring::Working;
+
+    for s in v {
+        if *s == Spring::Broken {
+            group += 1
+        };
+
+        if last == Spring::Broken && *s == Spring::Working {
+            ret.push(group);
+            group = 0;
+        }
+
+        last = *s;
+    }
+
+    ret.push(group);
+
+    ret
+}
+
+fn eval(v: &Vec<Spring>, memo: &mut HashMap<Vec<Spring>, Vec<u64>>) -> Vec<u64> {
+    let (last, rest) = v.split_last().unwrap();
+
+    let sl = match rest.last() {
+        Some(sl) => sl,
+        None => {
+            let res = if *last == Spring::Broken {
+                vec![1]
+            } else {
+                vec![]
+            };
+
+            memo.insert(v.to_vec(), res.clone());
+            return res;
+        }
+    };
+
+    let result = match memo.get(&rest.to_vec()) {
+        Some(b) => match last {
+            Spring::Working => b.clone(),
+            Spring::Broken => {
+                let mut b = b.clone();
+                match sl {
+                    Spring::Working => {
+                        b.push(1);
+                    }
+                    Spring::Broken => {
+                        *b.last_mut().unwrap() += 1;
+                    }
+                    Spring::Unknown => unreachable!(),
+                };
+                b
+            }
+            Spring::Unknown => unreachable!(),
+        },
+        None => eval_slow(v),
+    };
+
+    memo.insert(v.to_vec(), result.clone());
+
+    result.clone()
+}
+
+fn h(cond: &Vec<u64>, other: &Vec<u64>) -> bool {
+    // dbg!(&cond);
+    // dbg!(&other);
+
+    if other.is_empty() {
+        // dbg!(true);
+        return true;
+    }
+
+    if other.len() > cond.len() {
+        return false;
+    }
+
+    let mut res = true;
+
+    for (idx, o) in other.iter().enumerate() {
+        if cond[idx] != *o && !(idx == other.len() - 1 && *o <= cond[idx]) {
+            res = false;
+        }
+    }
+
+    // dbg!(res);
+
+    return res;
+}
+
+fn solve2(
+    original: &Vec<Spring>,
+    current: Vec<Spring>,
+    i: usize,
+    cond: &Vec<u64>,
+    sol_memo: &mut HashMap<Vec<Spring>, u64>,
+    eval_memo: &mut HashMap<Vec<Spring>, Vec<u64>>,
+) -> u64 {
+    match sol_memo.get(&current) {
+        Some(s) => {
+            println!("HIT");
+            return *s;
+        }
+        None => {}
+    };
+
+    if i == original.len() {
+        if eval(&current, eval_memo) == *cond {
+            return 1;
+        }
+        return 0;
+    }
+
+    let c = original[i];
+
+    let solutions = match c {
+        Spring::Working => {
+            let mut n = current.clone();
+            n.push(Spring::Working);
+            // dbg!(&n);
+            let eval = eval(&n, eval_memo);
+            // dbg!(&eval);
+            if h(&cond, &eval) {
+                solve2(original, n, i + 1, cond, sol_memo, eval_memo)
+            } else {
+                0
+            }
+        }
+        Spring::Broken => {
+            let mut n = current.clone();
+            n.push(Spring::Broken);
+            // dbg!(&n);
+            let eval = eval(&n, eval_memo);
+            // dbg!(&eval);
+            if h(&cond, &eval) {
+                solve2(original, n, i + 1, cond, sol_memo, eval_memo)
+            } else {
+                0
+            }
+        }
+        Spring::Unknown => {
+            let mut nw = current.clone();
+            nw.push(Spring::Working);
+            // dbg!(&nw);
+            let evalw = eval(&nw, eval_memo);
+            // dbg!(&evalw);
+            let working = if h(cond, &evalw) {
+                solve2(original, nw, i + 1, cond, sol_memo, eval_memo)
+            } else {
+                0
+            };
+
+            let mut nb = current.clone();
+            nb.push(Spring::Broken);
+            // dbg!(&nb);
+            let evalb = eval(&nb, eval_memo);
+            // dbg!(&evalb);
+            let valid = h(cond, &evalb);
+            let broken = if valid {
+                solve2(original, nb, i + 1, cond, sol_memo, eval_memo)
+            } else {
+                0
+            };
+
+            working + broken
+        }
+    };
+
+    sol_memo.insert(current.clone(), solutions);
+
+    solutions
+}
+
+pub fn p2() -> std::io::Result<()> {
+    let file = File::open("d12/src/input.txt")?;
+    let buf_reader = BufReader::new(file);
+
+    let mut sum = 0;
+
+    for (idx, l) in buf_reader.lines().enumerate() {
+        let mut memo: HashMap<Vec<Spring>, Vec<u64>> = HashMap::new();
+        let mut sol_memo: HashMap<Vec<Spring>, u64> = HashMap::new();
+        let l = l?;
+
+        let (springs_str, cond_str) = l.split_once(' ').unwrap();
+
+        let springs: Vec<Spring> = springs_str.chars().map(|c| Spring::new(c)).collect();
+        let mut springs_d: Vec<Spring> = Vec::new();
+        springs_d.extend(&springs);
+        springs_d.push(Spring::Unknown);
+        springs_d.extend(&springs);
+        springs_d.push(Spring::Unknown);
+        springs_d.extend(&springs);
+        springs_d.push(Spring::Unknown);
+        springs_d.extend(&springs);
+        springs_d.push(Spring::Unknown);
+        springs_d.extend(&springs);
+
+        let cond: Vec<u64> = cond_str
+            .split(",")
+            .map(|s| u64::from_str_radix(s, 10).unwrap())
+            .collect();
+        let len = cond.len();
+
+        let cond: Vec<u64> = cond.into_iter().cycle().take(len * 5).collect();
+
+        sum += solve2(&springs_d, Vec::new(), 0, &cond, &mut sol_memo, &mut memo);
+        println!("Completed {idx}");
+    }
+
+    println!("{sum}");
+
+    Ok(())
+}

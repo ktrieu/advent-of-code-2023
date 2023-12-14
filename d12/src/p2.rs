@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    fmt::Display,
     fs::File,
     io::{BufRead, BufReader},
 };
@@ -22,180 +22,205 @@ impl Spring {
     }
 }
 
-fn eval_slow(v: &[Spring]) -> Vec<u64> {
-    let mut ret: Vec<u64> = Vec::new();
+impl Display for Spring {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Spring::Working => write!(f, "."),
+            Spring::Broken => write!(f, "#"),
+            Spring::Unknown => write!(f, "?"),
+        }
+    }
+}
 
-    let mut group = 0;
-    let mut last = Spring::Working;
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct SolveInput {
+    pos: usize,
+    // Our current group.
+    current: Option<usize>,
+    // Remaining groups to fulfill, reversed for efficiency.
+    remaining: Vec<usize>,
+}
 
-    for s in v {
-        if *s == Spring::Broken {
-            group += 1
+impl SolveInput {
+    pub fn exit_group(&self) -> Option<Self> {
+        println!("EXIT");
+        match self.current {
+            Some(cgroup) => {
+                if cgroup != *self.remaining.last().unwrap() {
+                    None
+                } else {
+                    let mut c = self.clone();
+                    c.current = None;
+                    c.remaining.pop().unwrap();
+                    c.pos += 1;
+                    Some(c)
+                }
+            }
+            None => unreachable!(),
+        }
+    }
+
+    pub fn inc_group(&self) -> Option<Self> {
+        println!("INC");
+        match self.current {
+            Some(cgroup) => {
+                if cgroup == *self.remaining.last().unwrap() {
+                    None
+                } else {
+                    let mut c = self.clone();
+                    c.current = Some(cgroup + 1);
+                    c.pos += 1;
+                    Some(c)
+                }
+            }
+            None => unreachable!(),
+        }
+    }
+
+    pub fn enter_group(&self) -> Option<Self> {
+        println!("ENTER");
+        match self.current {
+            Some(_) => unreachable!(),
+            None => {
+                if self.remaining.len() == 0 {
+                    return None;
+                }
+                let mut c = self.clone();
+                c.current = Some(1);
+                c.pos += 1;
+
+                Some(c)
+            }
+        }
+    }
+
+    pub fn is_in_group(&self) -> bool {
+        self.current.is_some()
+    }
+}
+
+impl Display for SolveInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let current = self
+            .current
+            .map(|c| c.to_string())
+            .unwrap_or("X".to_string());
+        let remaining = self
+            .remaining
+            .iter()
+            .map(|r| r.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        write!(
+            f,
+            "position: {}, current: {}, remaining: {}",
+            self.pos, current, remaining
+        )
+    }
+}
+
+fn solve(original: &Vec<Spring>, input: SolveInput) -> usize {
+    println!("{input}");
+
+    if input.pos == original.len() {
+        // let sols = match (input.remaining.last(), input.current) {
+        //     (Some(remaining), Some(current)) => {
+        //         if input.remaining.len() == 1 && *remaining == current {
+        //             println!("SOLUTION");
+        //             1
+        //         } else {
+        //             println!("BRANCH FAIL");
+        //             0
+        //         }
+        //     }
+        //     _ => {
+        //         println!("BRANCH FAIL");
+        //         0
+        //     }
+        // };
+
+        let input = if input.is_in_group() {
+            input.exit_group()
+        } else {
+            Some(input)
         };
 
-        if last == Spring::Broken && *s == Spring::Working {
-            ret.push(group);
-            group = 0;
-        }
+        let sols = if input.is_some() && input.unwrap().remaining.len() == 0 {
+            println!("SOLUTION");
+            1
+        } else {
+            println!("BRANCH FAIL");
+            0
+        };
 
-        last = *s;
-    }
-
-    ret.push(group);
-
-    ret
-}
-
-fn eval(v: &Vec<Spring>, memo: &mut HashMap<Vec<Spring>, Vec<u64>>) -> Vec<u64> {
-    let (last, rest) = v.split_last().unwrap();
-
-    let sl = match rest.last() {
-        Some(sl) => sl,
-        None => {
-            let res = if *last == Spring::Broken {
-                vec![1]
-            } else {
-                vec![]
-            };
-
-            memo.insert(v.to_vec(), res.clone());
-            return res;
-        }
+        return sols;
     };
 
-    let result = match memo.get(&rest.to_vec()) {
-        Some(b) => match last {
-            Spring::Working => b.clone(),
-            Spring::Broken => {
-                let mut b = b.clone();
-                match sl {
-                    Spring::Working => {
-                        b.push(1);
-                    }
-                    Spring::Broken => {
-                        *b.last_mut().unwrap() += 1;
-                    }
-                    Spring::Unknown => unreachable!(),
-                };
-                b
-            }
-            Spring::Unknown => unreachable!(),
-        },
-        None => eval_slow(v),
-    };
+    let next = original[input.pos];
+    println!("{next}");
 
-    memo.insert(v.to_vec(), result.clone());
-
-    result.clone()
-}
-
-fn h(cond: &Vec<u64>, other: &Vec<u64>) -> bool {
-    // dbg!(&cond);
-    // dbg!(&other);
-
-    if other.is_empty() {
-        // dbg!(true);
-        return true;
-    }
-
-    if other.len() > cond.len() {
-        return false;
-    }
-
-    let mut res = true;
-
-    for (idx, o) in other.iter().enumerate() {
-        if cond[idx] != *o && !(idx == other.len() - 1 && *o <= cond[idx]) {
-            res = false;
-        }
-    }
-
-    // dbg!(res);
-
-    return res;
-}
-
-fn solve2(
-    original: &Vec<Spring>,
-    current: Vec<Spring>,
-    i: usize,
-    cond: &Vec<u64>,
-    sol_memo: &mut HashMap<Vec<Spring>, u64>,
-    eval_memo: &mut HashMap<Vec<Spring>, Vec<u64>>,
-) -> u64 {
-    match sol_memo.get(&current) {
-        Some(s) => {
-            println!("HIT");
-            return *s;
-        }
-        None => {}
-    };
-
-    if i == original.len() {
-        if eval(&current, eval_memo) == *cond {
-            return 1;
-        }
-        return 0;
-    }
-
-    let c = original[i];
-
-    let solutions = match c {
-        Spring::Working => {
-            let mut n = current.clone();
-            n.push(Spring::Working);
-            // dbg!(&n);
-            let eval = eval(&n, eval_memo);
-            // dbg!(&eval);
-            if h(&cond, &eval) {
-                solve2(original, n, i + 1, cond, sol_memo, eval_memo)
-            } else {
-                0
+    let sols = match (next, input.is_in_group()) {
+        (Spring::Working, true) => {
+            let n = input.exit_group();
+            match n {
+                Some(n) => solve(&original, n),
+                None => 0,
             }
         }
-        Spring::Broken => {
-            let mut n = current.clone();
-            n.push(Spring::Broken);
-            // dbg!(&n);
-            let eval = eval(&n, eval_memo);
-            // dbg!(&eval);
-            if h(&cond, &eval) {
-                solve2(original, n, i + 1, cond, sol_memo, eval_memo)
-            } else {
-                0
+        (Spring::Working, false) => {
+            let mut n = input.clone();
+            n.pos += 1;
+            solve(original, n)
+        }
+        (Spring::Broken, true) => {
+            let n = input.inc_group();
+            match n {
+                Some(n) => solve(&original, n),
+                None => 0,
             }
         }
-        Spring::Unknown => {
-            let mut nw = current.clone();
-            nw.push(Spring::Working);
-            // dbg!(&nw);
-            let evalw = eval(&nw, eval_memo);
-            // dbg!(&evalw);
-            let working = if h(cond, &evalw) {
-                solve2(original, nw, i + 1, cond, sol_memo, eval_memo)
-            } else {
-                0
+        (Spring::Broken, false) => {
+            let n = input.enter_group();
+            match n {
+                Some(n) => solve(&original, n),
+                None => 0,
+            }
+        }
+        (Spring::Unknown, true) => {
+            println!("WORKING: {}", input.pos);
+            let working_input = input.exit_group();
+            let working = match working_input {
+                Some(n) => solve(original, n),
+                None => 0,
             };
 
-            let mut nb = current.clone();
-            nb.push(Spring::Broken);
-            // dbg!(&nb);
-            let evalb = eval(&nb, eval_memo);
-            // dbg!(&evalb);
-            let valid = h(cond, &evalb);
-            let broken = if valid {
-                solve2(original, nb, i + 1, cond, sol_memo, eval_memo)
-            } else {
-                0
+            println!("BROKEN: {}", input.pos);
+            let broken_input = input.inc_group();
+            let broken = match broken_input {
+                Some(n) => solve(original, n),
+                None => 0,
             };
+
+            working + broken
+        }
+        (Spring::Unknown, false) => {
+            println!("BROKEN: {}", input.pos);
+            let broken_input = input.enter_group();
+            let broken = match broken_input {
+                Some(n) => solve(original, n),
+                None => 0,
+            };
+
+            println!("WORKING: {}", input.pos);
+            let mut working_input = input.clone();
+            working_input.pos += 1;
+            let working = solve(original, working_input);
 
             working + broken
         }
     };
 
-    sol_memo.insert(current.clone(), solutions);
-
-    solutions
+    sols
 }
 
 pub fn p2() -> std::io::Result<()> {
@@ -205,34 +230,43 @@ pub fn p2() -> std::io::Result<()> {
     let mut sum = 0;
 
     for (idx, l) in buf_reader.lines().enumerate() {
-        let mut memo: HashMap<Vec<Spring>, Vec<u64>> = HashMap::new();
-        let mut sol_memo: HashMap<Vec<Spring>, u64> = HashMap::new();
         let l = l?;
 
         let (springs_str, cond_str) = l.split_once(' ').unwrap();
 
         let springs: Vec<Spring> = springs_str.chars().map(|c| Spring::new(c)).collect();
-        let mut springs_d: Vec<Spring> = Vec::new();
-        springs_d.extend(&springs);
-        springs_d.push(Spring::Unknown);
-        springs_d.extend(&springs);
-        springs_d.push(Spring::Unknown);
-        springs_d.extend(&springs);
-        springs_d.push(Spring::Unknown);
-        springs_d.extend(&springs);
-        springs_d.push(Spring::Unknown);
-        springs_d.extend(&springs);
+        // let mut springs_d: Vec<Spring> = Vec::new();
+        // springs_d.extend(&springs);
+        // springs_d.push(Spring::Unknown);
+        // springs_d.extend(&springs);
+        // springs_d.push(Spring::Unknown);
+        // springs_d.extend(&springs);
+        // springs_d.push(Spring::Unknown);
+        // springs_d.extend(&springs);
+        // springs_d.push(Spring::Unknown);
+        // springs_d.extend(&springs);
 
-        let cond: Vec<u64> = cond_str
+        let mut cond: Vec<usize> = cond_str
             .split(",")
-            .map(|s| u64::from_str_radix(s, 10).unwrap())
+            .map(|s| usize::from_str_radix(s, 10).unwrap())
             .collect();
-        let len = cond.len();
 
-        let cond: Vec<u64> = cond.into_iter().cycle().take(len * 5).collect();
+        // let len = cond.len();
+        // let mut cond: Vec<usize> = cond.into_iter().cycle().take(len * 5).collect();
+        cond.reverse();
 
-        sum += solve2(&springs_d, Vec::new(), 0, &cond, &mut sol_memo, &mut memo);
-        println!("Completed {idx}");
+        let res = solve(
+            &springs,
+            SolveInput {
+                pos: 0,
+                current: None,
+                remaining: cond,
+            },
+        );
+        sum += res;
+
+        println!("Completed {idx}. Result: {res}");
+        println!("------------------------------")
     }
 
     println!("{sum}");
